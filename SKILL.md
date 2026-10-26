@@ -52,10 +52,16 @@ or `login --cookie-stdin --org your-org` reads it from stdin. Never put cookies
 in command arguments or logs. Login does not complete the website's sign-in
 flow.
 
-When diagnosing failures, compare the same page in signed-in Chrome. A redirect
-to sign-in or “This page couldn’t load” fails the CLI command; if Chrome works,
-refresh the CLI session with `login --browser chrome`. Missing Chrome produces
-an installation error; downloading Playwright Chromium is unnecessary.
+## Troubleshooting
+
+- `Session expired: the audit site rejected the stored credentials`: the site
+  redirected to sign-in or its API answered 401/403. Sign in at
+  https://audits.openzeppelin.com in Chrome, run
+  `oz-audits login --browser chrome`, then re-run the command.
+- `This page couldn’t load` with a valid session: not an auth problem. Check
+  the audit path and open the same page in signed-in Chrome.
+- Missing Chrome produces an installation error; downloading Playwright
+  Chromium is unnecessary.
 
 ## Read commands
 
@@ -127,8 +133,8 @@ Valid `--resolution` values (case-insensitive):
 - **Auth**: OZ cookies imported from Chrome, or a Cookie header from DevTools
 - **Config**: `~/.config/oz-audits/config.json` (keys: `cookie`, `org`)
 - **Base URL**: `https://audits.openzeppelin.com`
-- **Validation**: Login validates by fetching `/<org>` and checking for sign-in
-  redirect
+- **Validation**: Login validates by fetching `/<org>` and checking for a sign-in
+  redirect or API calls rejected with 401/403 (expired session)
 - **Write commands** use Playwright to drive the dialog UI (select resolution,
   fill TipTap editor, add PR URL and commits, submit) and wait for the dialog to
   close as proof of success.

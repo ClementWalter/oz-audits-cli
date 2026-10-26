@@ -95,8 +95,63 @@ def test_conflicting_login_sources_fail(arguments, login_dependencies):
 
 
 def test_sign_in_redirect_is_an_error():
-    with pytest.raises(click.ClickException, match="Authentication failed"):
+    with pytest.raises(click.ClickException, match="Session expired"):
         cli._check_page(SimpleNamespace(url=cli.BASE_URL + "/sign-in"))
+
+
+@pytest.fixture
+def error_screen_page():
+    """The SPA error screen shown both for stale sessions and for genuine failures."""
+    page = Mock(url=cli.BASE_URL + "/example/audit")
+    page.get_by_role.return_value.count.return_value = 1
+    return page
+
+
+def test_rejected_api_call_reports_expired_session(error_screen_page):
+    with pytest.raises(click.ClickException, match="Session expired"):
+        cli._check_page(error_screen_page, [cli.BASE_URL + "/api/trpc/users.me"])
+
+
+def test_expired_session_message_names_login_refresh(error_screen_page):
+    with pytest.raises(click.ClickException, match="oz-audits login --browser chrome"):
+        cli._check_page(error_screen_page, [cli.BASE_URL + "/api/trpc/users.me"])
+
+
+def test_error_screen_without_auth_failure_keeps_page_error(error_screen_page):
+    with pytest.raises(click.ClickException, match="This page couldn’t load"):
+        cli._check_page(error_screen_page, [])
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_api_rejection_is_auth_failure(status):
+    response = SimpleNamespace(status=status, url=cli.BASE_URL + "/api/trpc/users.me?batch=1")
+    assert cli._is_auth_failure(response)
+
+
+def test_api_server_error_is_not_auth_failure():
+    response = SimpleNamespace(status=500, url=cli.BASE_URL + "/api/trpc/users.me?batch=1")
+    assert not cli._is_auth_failure(response)
+
+
+def test_non_api_forbidden_is_not_auth_failure():
+    response = SimpleNamespace(status=403, url="https://cdn.example.com/asset.js")
+    assert not cli._is_auth_failure(response)
+
+
+def test_watcher_records_rejected_api_call():
+    page = Mock()
+    failures = cli._watch_auth_failures(page)
+    record = page.on.call_args.args[1]
+    record(SimpleNamespace(status=401, url=cli.BASE_URL + "/api/trpc/users.me"))
+    assert failures == [cli.BASE_URL + "/api/trpc/users.me"]
+
+
+def test_watcher_ignores_successful_api_call():
+    page = Mock()
+    failures = cli._watch_auth_failures(page)
+    record = page.on.call_args.args[1]
+    record(SimpleNamespace(status=200, url=cli.BASE_URL + "/api/auth/get-session"))
+    assert failures == []
 
 
 def test_application_error_is_not_a_success():

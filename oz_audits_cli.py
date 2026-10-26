@@ -147,21 +147,41 @@ def _launch_browser(playwright):
         ) from exc
 
 
-def _check_page(page) -> None:
-    """Reject sign-in redirects and application error screens before extracting data."""
-    if "/sign-in" in page.url:
-        raise click.ClickException(
-            "Authentication failed — redirected to sign-in. "
-            "Sign in at https://audits.openzeppelin.com in Chrome, "
-            "then run 'login --browser chrome'."
-        )
+SESSION_EXPIRED_MESSAGE = (
+    "Session expired: the audit site rejected the stored credentials. "
+    "Sign in at https://audits.openzeppelin.com in Chrome, "
+    "run 'oz-audits login --browser chrome', then re-run this command."
+)
+
+
+def _is_auth_failure(response) -> bool:
+    """A stale session token still renders the page shell; only its API calls get 401/403."""
+    return response.status in (401, 403) and response.url.startswith(f"{BASE_URL}/api/")
+
+
+def _watch_auth_failures(page) -> list[str]:
+    """Collect URLs of rejected API calls so an expired session is not reported as a page error."""
+    failures: list[str] = []
+
+    def record(response) -> None:
+        if _is_auth_failure(response):
+            logger.debug("Auth rejected (%s): %s", response.status, response.url)
+            failures.append(response.url)
+
+    page.on("response", record)
+    return failures
+
+
+def _check_page(page, auth_failures: list[str] | None = None) -> None:
+    """Reject sign-in redirects, expired sessions and application error screens."""
+    if "/sign-in" in page.url or auth_failures:
+        raise click.ClickException(SESSION_EXPIRED_MESSAGE)
     if page.get_by_role("heading", name="This page couldn’t load", exact=True).count() or (
         page.get_by_text("This page couldn’t load", exact=True).count()
     ):
         raise click.ClickException(
-            "The audit site returned 'This page couldn’t load'. "
-            "Check the page in Chrome; if it works there, refresh credentials "
-            "with 'login --browser chrome'."
+            "The audit site returned 'This page couldn’t load' with a valid session. "
+            "Check the page in Chrome; the audit path may be wrong or the site may be down."
         )
 
 
@@ -214,6 +234,7 @@ def fetch_page(cookie_str: str, path: str, wait_ms: int = 8000) -> dict:
         context = browser.new_context()
         context.add_cookies(cookies)
         page = context.new_page()
+        auth_failures = _watch_auth_failures(page)
 
         logger.debug("Navigating to %s", url)
         page.goto(url, wait_until="domcontentloaded")
@@ -221,7 +242,7 @@ def fetch_page(cookie_str: str, path: str, wait_ms: int = 8000) -> dict:
         page.wait_for_timeout(wait_ms)
 
         final_url = page.url
-        _check_page(page)
+        _check_page(page, auth_failures)
 
         # Extract rendered text content
         text = page.evaluate("() => document.body.innerText")
@@ -579,12 +600,13 @@ def submit(
         context = browser.new_context()
         context.add_cookies(cookies)
         page = context.new_page()
+        auth_failures = _watch_auth_failures(page)
 
         logger.debug("Navigating to %s", url)
         page.goto(url, wait_until="domcontentloaded")
         page.wait_for_timeout(wait)
 
-        _check_page(page)
+        _check_page(page, auth_failures)
 
         # The Audit Experience Survey is a fixed-position widget that intercepts
         # pointer events over the bottom-right corner. Hide it so Playwright can
@@ -775,11 +797,12 @@ def remove(path: str, wait: int, yes: bool):
         context = browser.new_context()
         context.add_cookies(cookies)
         page = context.new_page()
+        auth_failures = _watch_auth_failures(page)
 
         page.goto(url, wait_until="domcontentloaded")
         page.wait_for_timeout(wait)
 
-        _check_page(page)
+        _check_page(page, auth_failures)
 
         # Same fixed-position widget that blocks clicks on submit — hide it.
         page.evaluate(
