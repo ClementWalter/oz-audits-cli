@@ -1,6 +1,6 @@
 # oz-audits-cli
 
-**Visibility: private.** (pending review — no reason found)
+**Visibility: public.**
 
 Read OpenZeppelin audit reports on `audits.openzeppelin.com` and submit official
 responses to their issues, from the terminal. It renders the site in a headless
