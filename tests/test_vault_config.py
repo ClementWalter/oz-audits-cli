@@ -1,8 +1,24 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = [
+#     "pytest==9.1.1",
+#     "browser-cookie3==0.20.1",
+#     "click==8.5.0",
+#     "playwright==1.64.1",
+#     "rich==15.0.0",
+# ]
+#
+# [tool.uv]
+# exclude-newer = "2026-10-27T00:00:00Z"
+# ///
 """Credential precedence and safe synchronization through the shared vault broker."""
 
 import json
 import subprocess
 import sys
+
+import pytest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -136,3 +152,7 @@ def test_auth_status_process_works_without_login(tmp_path):
         capture_output=True, text=True, timeout=15, env=env,
     )
     assert (result.returncode, json.loads(result.stdout)["source"]) == (0, "vault")
+
+
+if __name__ == "__main__":
+    sys.exit(pytest.main([__file__, "-q"]))

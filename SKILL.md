@@ -19,21 +19,17 @@ tabs.
 
 ## How to invoke
 
-Invoke it as **`oz-audits`**, on `$PATH` via a symlink in `~/.local/bin` onto
-this repo's `bin/oz-audits`, so it always runs the current checkout.
+Invoke it as **`oz-audits`**, on `$PATH` via `uv run claudine/scripts/link_clis.py`
+(it links this repo's `bin/oz-audits` into `~/.local/bin`, so it always runs the
+current checkout). If `oz-audits` is missing from `$PATH`, run
+`<skill-dir>/bin/oz-audits` directly (PEP 723, `uv` resolves deps inline).
 
 ```bash
 oz-audits read https://audits.openzeppelin.com/<org>/<audit-slug>/issues
 ```
 
 Every path argument takes either a site path (`/<org>/<audit-slug>`) or the full
-URL copied from the browser. If `oz-audits` is not on `$PATH`, run `bin/oz-audits`
-resolved against this skill's directory (PEP 723, `uv` resolves deps inline), or
-link it once:
-
-```bash
-ln -sfn <skill-dir>/bin/oz-audits ~/.local/bin/oz-audits
-```
+URL copied from the browser.
 
 ## Authentication
 
@@ -52,18 +48,41 @@ or `login --cookie-stdin --org your-org` reads it from stdin. Never put cookies
 in command arguments or logs. Login does not complete the website's sign-in
 flow.
 
-## Troubleshooting
+### Getting the Cookie header
 
-- `Session expired: the audit site rejected the stored credentials`: the site
-  redirected to sign-in or its API answered 401/403. Sign in at
-  https://audits.openzeppelin.com in Chrome, run
-  `oz-audits login --browser chrome`, then re-run the command.
-- `This page couldn’t load` with a valid session: not an auth problem. Check
-  the audit path and open the same page in signed-in Chrome.
-- Missing Chrome produces an installation error; downloading Playwright
-  Chromium is unnecessary.
+1. Open https://audits.openzeppelin.com in your browser and log in
+2. Open DevTools (F12) → **Network** tab
+3. Refresh the page, click any request to `audits.openzeppelin.com`
+4. In the request headers, copy the full **Cookie:** header value
+5. Paste it when `login` prompts
 
-## Read commands
+### Credentials from the 1Password vault
+
+The shared `claudine-secret auth` broker loads and synchronizes credentials with
+1Password. Broker credentials take precedence over the local compatibility file
+`~/.config/oz-audits/config.json`, except when a local `.pending` marker records
+an unsynchronized login. The local file is saved with mode `0600`; it contains
+the Cookie header and organization slug. Broker outages retain that working
+copy.
+
+Use `auth-status --json` for synchronization metadata without exposing secrets,
+and `auth-sync` to retry pending synchronization. These commands do not validate
+the website session; use `ls` to check access.
+
+## Output conventions
+
+- stdout carries data only: page text (`read`, `ls`), raw HTML (`html`),
+  matching lines (`search`), link tables (`ls`, `links`), and the
+  `auth-status` / `auth-sync` line or JSON.
+- Status, confirmations and errors go to stderr, so `oz-audits read … > a.txt`
+  captures the page alone.
+- `auth-status --json` and `auth-sync` print JSON; the page commands print text
+  (there is no `--json` on them, the site renders free-form text).
+- `-o FILE` on `read` / `html` writes the file and reports the path on stderr.
+
+## Commands
+
+### Read
 
 ```bash
 # List audits on your organization's project page
@@ -88,7 +107,7 @@ oz-audits html /<org> -o page.html
 Replace `<org>` with your organization slug as it appears in the
 audits.openzeppelin.com URL.
 
-## Write commands
+### Write
 
 ```bash
 # Submit an official response to an issue.
@@ -120,15 +139,39 @@ Valid `--resolution` values (case-insensitive):
 
 `--commit` can be passed multiple times to attach several commit references.
 
-## Getting the Cookie header
+## Recipes
 
-1. Open https://audits.openzeppelin.com in your browser and log in
-2. Open DevTools (F12) → **Network** tab
-3. Refresh the page, click any request to `audits.openzeppelin.com`
-4. In the request headers, copy the full **Cookie:** header value
-5. Paste it when `login` prompts
+```bash
+# Which issues are in this audit, and what does the critical one say?
+oz-audits links /<org>/<audit-slug>
+oz-audits read /<org>/<audit-slug>/issue/<issue-slug>
 
-## Key Details
+# Find every mention of a keyword in a report, then save the whole report
+oz-audits search /<org>/<audit-slug> "reentrancy"
+oz-audits read /<org>/<audit-slug> -o audit.txt
+
+# Answer an issue: preview first, read the screenshot, then submit for real
+oz-audits submit /<org>/<audit-slug>/issue/<issue-slug> \
+  --response "Fixed in the linked PR." --pr https://github.com/org/repo/pull/123 \
+  --dry-run --screenshot /tmp/preview.png
+```
+
+## Gotchas
+
+- `Session expired: the audit site rejected the stored credentials`: the site
+  redirected to sign-in or its API answered 401/403. Sign in at
+  https://audits.openzeppelin.com in Chrome, run
+  `oz-audits login --browser chrome`, then re-run the command.
+- `This page couldn’t load` with a valid session: not an auth problem. Check
+  the audit path and open the same page in signed-in Chrome.
+- Missing Chrome produces an installation error; downloading Playwright
+  Chromium is unnecessary.
+- `submit` sends for real unless `--dry-run`; always preview first and show the
+  user the screenshot. `remove` asks for confirmation unless `-y`.
+- Never put cookies in command arguments or logs; use `--browser chrome` or
+  `--cookie-stdin`.
+
+### Key details
 
 - **Auth**: OZ cookies imported from Chrome, or a Cookie header from DevTools
 - **Config**: `~/.config/oz-audits/config.json` (keys: `cookie`, `org`)
@@ -138,16 +181,3 @@ Valid `--resolution` values (case-insensitive):
 - **Write commands** use Playwright to drive the dialog UI (select resolution,
   fill TipTap editor, add PR URL and commits, submit) and wait for the dialog to
   close as proof of success.
-
-## Credentials from the 1Password vault
-
-The shared `claudine-secret auth` broker loads and synchronizes credentials with
-1Password. Broker credentials take precedence over the local compatibility file
-`~/.config/oz-audits/config.json`, except when a local `.pending` marker records
-an unsynchronized login. The local file is saved with mode `0600`; it contains
-the Cookie header and organization slug. Broker outages retain that working
-copy.
-
-Use `auth-status --json` for synchronization metadata without exposing secrets,
-and `auth-sync` to retry pending synchronization. These commands do not validate
-the website session; use `ls` to check access.

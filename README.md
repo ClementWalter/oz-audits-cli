@@ -1,5 +1,7 @@
 # oz-audits-cli
 
+**Visibility: private.** (pending review — no reason found)
+
 Read OpenZeppelin audit reports on `audits.openzeppelin.com` and submit official
 responses to their issues, from the terminal. It renders the site in a headless
 installed Chrome with the session cookies of your signed-in Chrome.
@@ -7,7 +9,7 @@ installed Chrome with the session cookies of your signed-in Chrome.
 ## Install
 
 ```bash
-ln -sfn ~/Documents/oz-audits-cli/bin/oz-audits ~/.local/bin/oz-audits
+uv run claudine/scripts/link_clis.py   # links bin/oz-audits into ~/.local/bin
 ```
 
 `uv` resolves the dependencies on first run (PEP 723). Google Chrome must be
@@ -32,5 +34,5 @@ See [SKILL.md](SKILL.md) for the full manual.
 ## Tests
 
 ```bash
-uv run --with pytest --with click --with playwright --with rich --with browser-cookie3 pytest -q tests
+for t in tests/test_*.py; do uv run --script "$t"; done
 ```

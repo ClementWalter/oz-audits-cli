@@ -2,11 +2,14 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = [
-#     "browser-cookie3",
-#     "click",
-#     "playwright",
-#     "rich",
+#     "browser-cookie3==0.20.1",
+#     "click==8.5.0",
+#     "playwright==1.64.1",
+#     "rich==15.0.0",
 # ]
+#
+# [tool.uv]
+# exclude-newer = "2026-10-27T00:00:00Z"
 # ///
 """CLI to read OpenZeppelin audit reports using browser cookies for auth.
 
@@ -31,7 +34,9 @@ CONFIG_DIR = Path.home() / ".config" / "oz-audits"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
 VAULT_DOCUMENT = "oz-audits config.json"
-console = Console()
+# Status and prompts go to stderr; stdout carries data only.
+console = Console(stderr=True)
+out = Console()
 
 
 # -- Config management --------------------------------------------------------
@@ -265,7 +270,7 @@ def fetch_page(cookie_str: str, path: str, wait_ms: int = 8000) -> dict:
 # -- CLI commands -------------------------------------------------------------
 
 
-@click.group()
+@click.group(epilog="\b\nExamples:\n  oz-audits login --browser chrome --org your-org\n  oz-audits ls\n  oz-audits read /your-org/your-audit -o audit.txt\n  oz-audits search /your-org/your-audit \"critical\"\n  oz-audits auth-status --json")
 @click.option("--verbose", "-v", is_flag=True, help="Enable debug logging.")
 def cli(verbose: bool):
     """Read OpenZeppelin audit reports.
@@ -295,7 +300,7 @@ def _require_org(config: dict) -> str:
     return org
 
 
-@cli.command()
+@cli.command(epilog="\b\nExamples:\n  oz-audits login --browser chrome --org your-org\n  oz-audits login --cookie-stdin --org your-org < cookie.txt")
 @click.option("--cookie-stdin", is_flag=True, help="Read the Cookie header from stdin without echoing it.")
 @click.option("--org", default=None, help="Organization slug, e.g. your-org.")
 @click.option("--browser", type=click.Choice(["chrome"]), help="Import the signed-in Chrome session.")
@@ -303,11 +308,8 @@ def _require_org(config: dict) -> str:
 def login(cookie_stdin: bool, org: str | None, browser: str | None, cookie_file: str | None):
     """Store browser cookies and organization slug for authentication.
 
-    Examples: login --browser chrome --org your-org
-
-    Or pipe a Cookie header to: login --cookie-stdin --org your-org
-
-    Manual steps:
+    \b
+    Without --browser or --cookie-stdin, prompts for the Cookie header:
       1. Open https://audits.openzeppelin.com in your browser and log in
       2. Open DevTools (F12) > Network tab
       3. Refresh the page, click any request to audits.openzeppelin.com
@@ -367,7 +369,7 @@ def login(cookie_stdin: bool, org: str | None, browser: str | None, cookie_file:
     console.print(f"[dim]Config saved to {CONFIG_FILE}[/]")
 
 
-@cli.command(name="ls")
+@cli.command(name="ls", epilog="\b\nExamples:\n  oz-audits ls\n  oz-audits ls --wait 12000")
 @click.option("--wait", "-w", default=8000, help="Wait ms for JS render.")
 def list_audits(wait: int):
     """List available audits on your organization's project page."""
@@ -385,14 +387,13 @@ def list_audits(wait: int):
         table.add_column("Path", style="green")
         for link in result["links"]:
             table.add_row(link["text"], link["href"])
-        console.print(table)
+        out.print(table)
 
-    console.print("\n[bold]Page Content:[/bold]\n")
     text = result["text"]
-    console.print(text[:5000] if len(text) > 5000 else text)
+    click.echo(text[:5000])
 
 
-@cli.command()
+@cli.command(epilog="\b\nExamples:\n  oz-audits read /your-org/your-audit\n  oz-audits read https://audits.openzeppelin.com/your-org/your-audit/issues -o audit.txt")
 @click.argument("path")
 @click.option(
     "--output", "-o", type=click.Path(), default=None,
@@ -420,10 +421,10 @@ def read(path: str, output: str | None, wait: int):
         out_path.write_text(text, encoding="utf-8")
         console.print(f"[green]Saved to {out_path}[/green]")
     else:
-        console.print(text)
+        click.echo(text)
 
 
-@cli.command()
+@cli.command(epilog="\b\nExamples:\n  oz-audits html /your-org -o page.html")
 @click.argument("path")
 @click.option(
     "--output", "-o", type=click.Path(), default=None,
@@ -450,10 +451,10 @@ def html(path: str, output: str | None, wait: int):
         out_path.write_text(result["html"], encoding="utf-8")
         console.print(f"[green]Saved HTML to {out_path}[/green]")
     else:
-        console.print(result["html"])
+        click.echo(result["html"])
 
 
-@cli.command()
+@cli.command(epilog="\b\nExamples:\n  oz-audits links /your-org\n  oz-audits links /your-org/your-audit")
 @click.argument("path")
 @click.option("--wait", "-w", default=8000, help="Wait ms for JS render.")
 def links(path: str, wait: int):
@@ -478,10 +479,10 @@ def links(path: str, wait: int):
     table.add_column("Href", style="green")
     for link in found:
         table.add_row(link["text"], link["href"])
-    console.print(table)
+    out.print(table)
 
 
-@cli.command()
+@cli.command(epilog="\b\nExamples:\n  oz-audits search /your-org/your-audit \"critical\"")
 @click.argument("path")
 @click.argument("query")
 @click.option("--wait", "-w", default=8000, help="Wait ms for JS render.")
@@ -510,7 +511,7 @@ def search(path: str, query: str, wait: int):
 
     console.print(f"[bold]{len(matches)} matches for '{query}':[/bold]\n")
     for line in matches:
-        console.print(line)
+        click.echo(line)
 
 
 # Valid values for the "Proposed Resolution" dropdown as rendered in the UI.
@@ -522,7 +523,7 @@ RESOLUTION_CHOICES = (
 )
 
 
-@cli.command()
+@cli.command(epilog="\b\nExamples:\n  oz-audits submit /your-org/your-audit/issue/your-issue --response \"Fixed in the linked PR.\" --pr https://github.com/org/repo/pull/123 --dry-run --screenshot /tmp/preview.png\n  oz-audits submit /your-org/your-audit/issue/your-issue -r \"Acknowledged, not resolved\" -m \"Accepted risk.\" --commit abc1234")
 @click.argument("path")
 @click.option(
     "--resolution",
@@ -756,7 +757,7 @@ def submit(
             browser.close()
 
 
-@cli.command()
+@cli.command(epilog="\b\nExamples:\n  oz-audits remove /your-org/your-audit/issue/your-issue\n  oz-audits remove /your-org/your-audit/issue/your-issue -y")
 @click.argument("path")
 @click.option("--wait", "-w", default=8000, help="Wait ms for JS render.")
 @click.option(
@@ -875,10 +876,10 @@ def remove(path: str, wait: int, yes: bool):
         browser.close()
 
 
-@cli.command("auth-status")
+@cli.command("auth-status", epilog="\b\nExamples:\n  oz-audits auth-status\n  oz-audits auth-status --json")
 @click.option("--json", "as_json", is_flag=True, help="Return credential metadata without secrets.")
 def auth_status(as_json: bool) -> None:
-    """Inspect vault synchronization. Example: auth-status --json."""
+    """Inspect vault synchronization."""
     metadata = auth_broker("status") or {
         "connector": "oz-audits", "account": "default", "source": "unavailable",
         "configured": False, "pending": False, "last_sync": None,
@@ -890,15 +891,15 @@ def auth_status(as_json: bool) -> None:
                f"{metadata['source']}; pending={metadata['pending']}; local={metadata['legacy_available']}")
 
 
-@cli.command("auth-sync")
+@cli.command("auth-sync", epilog="\b\nExamples:\n  oz-audits auth-sync")
 def auth_sync() -> None:
-    """Retry pending vault sync or import local credentials. Example: auth-sync."""
+    """Retry pending vault sync or import local credentials."""
     # Broker pending data is newer than any compatibility copy.
     config = vault_config()
     if not config and CONFIG_FILE.exists():
         config = json.loads(CONFIG_FILE.read_text())
     if not config:
-        raise click.ClickException("No credentials available to synchronize; connect this tool in Brain.")
+        raise click.ClickException("No credentials available to synchronize; run `oz-audits login --browser chrome --org <org>`.")
     metadata = auth_broker("save", config)
     if not metadata:
         raise click.ClickException("Credential broker unavailable; local login is preserved.")
@@ -908,10 +909,6 @@ def auth_sync() -> None:
     if metadata.get("pending"):
         raise click.exceptions.Exit(3)
 
-
-from onebrain_policy import install as _install_onebrain_policy  # noqa: E402
-
-_install_onebrain_policy(cli, "oz-audits")
 
 if __name__ == "__main__":
     cli()

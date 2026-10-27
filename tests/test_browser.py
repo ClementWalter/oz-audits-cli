@@ -1,3 +1,17 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = [
+#     "pytest==9.1.1",
+#     "browser-cookie3==0.20.1",
+#     "click==8.5.0",
+#     "playwright==1.64.1",
+#     "rich==15.0.0",
+# ]
+#
+# [tool.uv]
+# exclude-newer = "2026-10-27T00:00:00Z"
+# ///
 """Chrome launch and login failures must preserve working credentials."""
 
 import sys
@@ -160,3 +174,7 @@ def test_application_error_is_not_a_success():
     page.get_by_text.return_value.count.return_value = 1
     with pytest.raises(click.ClickException, match="This page couldn’t load"):
         cli._check_page(page)
+
+
+if __name__ == "__main__":
+    sys.exit(pytest.main([__file__, "-q"]))
