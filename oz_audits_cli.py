@@ -522,8 +522,24 @@ RESOLUTION_CHOICES = (
     "Acknowledged, not resolved",
 )
 
+# Only these resolutions render the PR and commit fields, and the form then requires one of them.
+CODE_RESOLUTIONS = ("resolved", "partially resolved")
 
-@cli.command(epilog="\b\nExamples:\n  oz-audits submit /your-org/your-audit/issue/your-issue --response \"Fixed in the linked PR.\" --pr https://github.com/org/repo/pull/123 --dry-run --screenshot /tmp/preview.png\n  oz-audits submit /your-org/your-audit/issue/your-issue -r \"Acknowledged, not resolved\" -m \"Accepted risk.\" --commit abc1234")
+
+def _check_code_references(resolution: str, pr: str | None, commit: tuple[str, ...]) -> None:
+    """Reject PR/commit combinations the dialog for `resolution` cannot accept."""
+    if resolution.lower() in CODE_RESOLUTIONS:
+        if not pr and not commit:
+            raise click.ClickException(
+                f"'{resolution}' requires --pr or --commit."
+            )
+    elif pr or commit:
+        raise click.ClickException(
+            f"'{resolution}' has no PR or commit fields; drop --pr and --commit."
+        )
+
+
+@cli.command(epilog="\b\nExamples:\n  oz-audits submit /your-org/your-audit/issue/your-issue --response \"Fixed in the linked PR.\" --pr https://github.com/org/repo/pull/123 --dry-run --screenshot /tmp/preview.png\n  oz-audits submit /your-org/your-audit/issue/your-issue -r \"Acknowledged, not resolved\" -m \"Accepted risk.\"")
 @click.argument("path")
 @click.option(
     "--resolution",
@@ -576,7 +592,8 @@ def submit(
     PATH is the issue URL path, e.g.
     /<org>/<audit-slug>/issue/<issue-slug>
 
-    At least one of --pr or --commit must be supplied (the form enforces this).
+    Resolved and Partially Resolved need --pr or --commit; the acknowledged
+    resolutions take neither (their form has no such fields).
     Use --dry-run to fill the form without submitting (useful for preview).
     """
     config = load_config()
@@ -584,11 +601,7 @@ def submit(
     if not cookie:
         raise click.ClickException("Not logged in. Run 'login' first.")
 
-    # The form requires at least one of PR URL or commit hashes.
-    if not pr and not commit:
-        raise click.ClickException(
-            "At least one of --pr or --commit must be provided."
-        )
+    _check_code_references(resolution, pr, commit)
 
     if not path.startswith("/"):
         path = f"/{path}"

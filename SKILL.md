@@ -111,7 +111,7 @@ audits.openzeppelin.com URL.
 
 ```bash
 # Submit an official response to an issue.
-# At least one of --pr or --commit is required.
+# Resolved and Partially Resolved require --pr or --commit.
 oz-audits submit /<org>/<audit-slug>/issue/<issue-slug> \
   --resolution "Resolved" \
   --response "Fixed in the linked PR." \
@@ -122,6 +122,11 @@ oz-audits submit /<org>/<audit-slug>/issue/<issue-slug> \
 oz-audits submit /<org>/<audit-slug>/issue/<issue-slug> \
   --response "..." --pr https://... \
   --dry-run --screenshot /tmp/preview.png
+
+# Won't fix: the acknowledged resolutions have no PR or commit fields
+oz-audits submit /<org>/<audit-slug>/issue/<issue-slug> \
+  --resolution "Acknowledged, not resolved" \
+  --response "Won't fix: ..."
 
 # Remove a previously-submitted response (with CLI confirmation)
 oz-audits remove /<org>/<audit-slug>/issue/<issue-slug>
@@ -137,7 +142,10 @@ Valid `--resolution` values (case-insensitive):
 - `Acknowledged, will resolve`
 - `Acknowledged, not resolved`
 
-`--commit` can be passed multiple times to attach several commit references.
+Only `Resolved` and `Partially Resolved` show the PR and commit fields, so the
+CLI requires one of `--pr`/`--commit` for them and rejects both for the
+acknowledged resolutions. `--commit` can be passed multiple times to attach
+several commit references.
 
 ## Recipes
 
