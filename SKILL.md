@@ -48,6 +48,12 @@ or `login --cookie-stdin --org your-org` reads it from stdin. Never put cookies
 in command arguments or logs. Login does not complete the website's sign-in
 flow.
 
+`login` is optional when Chrome is signed in: a page command with no stored
+session reads Chrome's default profile, and one whose stored session expired
+retries once with Chrome's current session; the session that worked is saved.
+`$OZ_AUDITS_ORG` (the Claude Desktop extension's Organization setting) wins over
+the stored slug. `remove` without `--yes` and without a terminal is a dry run.
+
 ### Getting the Cookie header
 
 1. Open https://audits.openzeppelin.com in your browser and log in
@@ -168,8 +174,8 @@ oz-audits submit /<org>/<audit-slug>/issue/<issue-slug> \
 
 - `Session expired: the audit site rejected the stored credentials`: the site
   redirected to sign-in or its API answered 401/403. Sign in at
-  https://audits.openzeppelin.com in Chrome, run
-  `oz-audits login --browser chrome`, then re-run the command.
+  https://audits.openzeppelin.com in Chrome and re-run the command (it retries
+  with Chrome's session), or run `oz-audits login --browser chrome`.
 - `This page couldn’t load` with a valid session: not an auth problem. Check
   the audit path and open the same page in signed-in Chrome.
 - Missing Chrome produces an installation error; downloading Playwright

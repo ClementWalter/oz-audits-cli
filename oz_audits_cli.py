@@ -19,6 +19,8 @@ with session cookies imported from Chrome or supplied through stdin.
 
 import json
 import logging
+import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -52,12 +54,16 @@ def load_config() -> dict:
     return json.loads(CONFIG_FILE.read_text())
 
 
+def broker_helper() -> str:
+    """Path of the `claudine-secret` vault broker, which most installs do not have."""
+    return shutil.which("claudine-secret") or str(Path.home() / ".local/bin/claudine-secret")
+
+
 def auth_broker(operation: str, config: dict | None = None) -> dict:
     """Use the shared vault broker without exposing credentials in arguments."""
-    import shutil
     import subprocess
 
-    helper = shutil.which("claudine-secret") or str(Path.home() / ".local/bin/claudine-secret")
+    helper = broker_helper()
     args = [helper, "auth", operation, "oz-audits"]
     if operation == "status":
         args.append("--json")
@@ -86,7 +92,6 @@ def vault_config() -> dict:
 
 def save_config(config: dict) -> None:
     """Keep a protected working copy and sync successful login credentials."""
-    import os
     import tempfile
 
     CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -105,7 +110,7 @@ def save_config(config: dict) -> None:
     metadata = auth_broker("save", config)
     if metadata.get("source") == "vault" and not metadata.get("pending"):
         marker.unlink(missing_ok=True)
-    else:
+    elif Path(broker_helper()).exists():
         logging.getLogger(__name__).warning("Login saved locally; 1Password synchronization is pending.")
 
 
@@ -154,9 +159,16 @@ def _launch_browser(playwright):
 
 SESSION_EXPIRED_MESSAGE = (
     "Session expired: the audit site rejected the stored credentials. "
-    "Sign in at https://audits.openzeppelin.com in Chrome, "
-    "run 'oz-audits login --browser chrome', then re-run this command."
+    "Sign in again at https://audits.openzeppelin.com in Google Chrome, then retry. "
+    "In a terminal: run 'oz-audits login --browser chrome', then re-run this command."
 )
+SIGN_IN_MESSAGE = (
+    "Not signed in to OpenZeppelin Audits. Sign in at https://audits.openzeppelin.com in Google Chrome "
+    "on this computer, then retry: the session is read from Chrome. If macOS asks to allow access to "
+    "\"Chrome Safe Storage\", click Always Allow. In a terminal: 'oz-audits login --browser chrome --org <org>'."
+)
+# Where a Claude Desktop user sets what `login --org` stores in a terminal.
+ORG_SETTING = "OZ_AUDITS_ORG"
 
 
 def _is_auth_failure(response) -> bool:
@@ -212,6 +224,49 @@ def _chrome_cookie_header(cookie_file: str | None = None) -> str:
             "then retry; use --cookie-file for another Chrome profile."
         )
     return header
+
+
+# Cookie stores browser_cookie3 reads on macOS; checked first because it asks the keychain before looking.
+CHROME_COOKIE_GLOBS = ("Library/Application Support/Google/Chrome*/Default/Cookies",
+                       "Library/Application Support/Google/Chrome*/Profile */Cookies")
+
+
+def _chrome_session() -> str:
+    """Chrome's current OZ cookies, or an error saying where to sign in."""
+    if sys.platform == "darwin" and not any(any(Path.home().glob(g)) for g in CHROME_COOKIE_GLOBS):
+        raise click.ClickException(SIGN_IN_MESSAGE)
+    try:
+        return _chrome_cookie_header()
+    except click.ClickException as exc:
+        logger.debug("No Chrome session: %s", exc.message)
+        raise click.ClickException(SIGN_IN_MESSAGE) from exc
+
+
+def with_session(config: dict, run):
+    """`run(cookie)` with the saved session, else Chrome's; an expired one is retried once with Chrome's.
+
+    The cookie that worked is saved for later runs; one that did not never replaces the saved one.
+    """
+    cookie = config.get("cookie", "")
+    if not cookie:
+        cookie = _chrome_session()
+        result = run(cookie)
+        save_config({**config, "cookie": cookie})
+        return result
+    try:
+        return run(cookie)
+    except click.ClickException as exc:
+        if exc.message != SESSION_EXPIRED_MESSAGE:
+            raise
+        try:
+            fresh = _chrome_cookie_header()
+        except click.ClickException:
+            raise exc from None
+        if fresh == cookie:
+            raise
+        result = run(fresh)
+        save_config({**config, "cookie": fresh})
+        return result
 
 
 def _site_path(path: str) -> str:
@@ -290,12 +345,17 @@ def _require_org(config: dict) -> str:
 
     The slug is the URL path segment under audits.openzeppelin.com that
     identifies your organization's project area (e.g. the "<org>" in
-    https://audits.openzeppelin.com/<org>). Stored via the 'login' command.
+    https://audits.openzeppelin.com/<org>). `$OZ_AUDITS_ORG` (the extension's
+    setting) wins over the one stored by the 'login' command.
     """
-    org = config.get("org", "").strip().strip("/")
+    setting = os.environ.get(ORG_SETTING, "").strip()
+    # Claude Desktop passes an unfilled optional setting as its raw `${user_config.…}` template.
+    org = (setting if setting and not setting.startswith("${") else config.get("org", "")).strip().strip("/")
     if not org:
         raise click.ClickException(
-            "No organization slug configured. Run 'login' and set one."
+            "No organization slug configured: fill 'Organization' in the OpenZeppelin Audits extension's settings "
+            "(Claude Desktop → Settings → Extensions), the part after audits.openzeppelin.com/ in your project's "
+            f"address. In a terminal: run 'login --org <org>' or set {ORG_SETTING}."
         )
     return org
 
@@ -374,12 +434,8 @@ def login(cookie_stdin: bool, org: str | None, browser: str | None, cookie_file:
 def list_audits(wait: int):
     """List available audits on your organization's project page."""
     config = load_config()
-    cookie = config.get("cookie", "")
-    if not cookie:
-        raise click.ClickException("Not logged in. Run 'login' first.")
-
     org = _require_org(config)
-    result = fetch_page(cookie, f"/{org}", wait_ms=wait)
+    result = with_session(config, lambda cookie: fetch_page(cookie, f"/{org}", wait_ms=wait))
 
     if result["links"]:
         table = Table(title="Audit Links")
@@ -405,15 +461,10 @@ def read(path: str, output: str | None, wait: int):
 
     PATH is the URL path relative to the base, e.g. /<org>/some-audit-id.
     """
-    config = load_config()
-    cookie = config.get("cookie", "")
-    if not cookie:
-        raise click.ClickException("Not logged in. Run 'login' first.")
-
     if not path.startswith("/"):
         path = f"/{path}"
 
-    result = fetch_page(cookie, path, wait_ms=wait)
+    result = with_session(load_config(), lambda cookie: fetch_page(cookie, path, wait_ms=wait))
     text = result["text"]
 
     if output:
@@ -436,15 +487,10 @@ def html(path: str, output: str | None, wait: int):
 
     PATH is the URL path relative to the base, e.g. /<org>.
     """
-    config = load_config()
-    cookie = config.get("cookie", "")
-    if not cookie:
-        raise click.ClickException("Not logged in. Run 'login' first.")
-
     if not path.startswith("/"):
         path = f"/{path}"
 
-    result = fetch_page(cookie, path, wait_ms=wait)
+    result = with_session(load_config(), lambda cookie: fetch_page(cookie, path, wait_ms=wait))
 
     if output:
         out_path = Path(output)
@@ -459,15 +505,10 @@ def html(path: str, output: str | None, wait: int):
 @click.option("--wait", "-w", default=8000, help="Wait ms for JS render.")
 def links(path: str, wait: int):
     """List all internal links on a page."""
-    config = load_config()
-    cookie = config.get("cookie", "")
-    if not cookie:
-        raise click.ClickException("Not logged in. Run 'login' first.")
-
     if not path.startswith("/"):
         path = f"/{path}"
 
-    result = fetch_page(cookie, path, wait_ms=wait)
+    result = with_session(load_config(), lambda cookie: fetch_page(cookie, path, wait_ms=wait))
     found = result["links"]
 
     if not found:
@@ -491,15 +532,10 @@ def search(path: str, query: str, wait: int):
 
     Prints lines from the extracted text that contain QUERY (case-insensitive).
     """
-    config = load_config()
-    cookie = config.get("cookie", "")
-    if not cookie:
-        raise click.ClickException("Not logged in. Run 'login' first.")
-
     if not path.startswith("/"):
         path = f"/{path}"
 
-    result = fetch_page(cookie, path, wait_ms=wait)
+    result = with_session(load_config(), lambda cookie: fetch_page(cookie, path, wait_ms=wait))
     text = result["text"]
 
     query_lower = query.lower()
@@ -596,16 +632,29 @@ def submit(
     resolutions take neither (their form has no such fields).
     Use --dry-run to fill the form without submitting (useful for preview).
     """
-    config = load_config()
-    cookie = config.get("cookie", "")
-    if not cookie:
-        raise click.ClickException("Not logged in. Run 'login' first.")
-
     _check_code_references(resolution, pr, commit)
 
     if not path.startswith("/"):
         path = f"/{path}"
 
+    with_session(
+        load_config(),
+        lambda cookie: _submit(cookie, path, resolution, response, pr, commit, wait, dry_run, screenshot),
+    )
+
+
+def _submit(
+    cookie: str,
+    path: str,
+    resolution: str,
+    response: str,
+    pr: str | None,
+    commit: tuple[str, ...],
+    wait: int,
+    dry_run: bool,
+    screenshot: str | None,
+) -> None:
+    """Fill, and unless `dry_run` send, the response dialog of the issue at `path`."""
     url = f"{BASE_URL}{_site_path(path)}"
     cookies = _parse_cookie_header(cookie)
 
@@ -789,11 +838,9 @@ def remove(path: str, wait: int, yes: bool):
     "Remove Response" button in that case. If no response is present, the
     command exits with a clear message and does not alter state.
     """
-    config = load_config()
-    cookie = config.get("cookie", "")
-    if not cookie:
-        raise click.ClickException("Not logged in. Run 'login' first.")
-
+    if not yes and not sys.stdin.isatty():
+        console.print(f"[yellow]Dry run: would remove the official response on {path}. Pass --yes to remove it.[/]")
+        return
     if not yes and not click.confirm(
         f"Permanently remove the official response on {path}?", default=False
     ):
@@ -803,6 +850,11 @@ def remove(path: str, wait: int, yes: bool):
     if not path.startswith("/"):
         path = f"/{path}"
 
+    with_session(load_config(), lambda cookie: _remove(cookie, path, wait))
+
+
+def _remove(cookie: str, path: str, wait: int) -> None:
+    """Remove the official response on the issue at `path`, if one is on file."""
     url = f"{BASE_URL}{_site_path(path)}"
     cookies = _parse_cookie_header(cookie)
 

@@ -1,0 +1,18 @@
+{
+  "display_name": "OpenZeppelin Audits",
+  "description": "Read OpenZeppelin audit reports and respond to their issues from Claude.",
+  "long_description": "Reads the audit reports of your project on audits.openzeppelin.com, and can submit or remove your team's official response to an issue.\n\nSetup:\n1. Install Google Chrome if it is not on this Mac, and sign in at https://audits.openzeppelin.com in it.\n2. Open your project there and copy the part of the address after audits.openzeppelin.com/ (for example your-org). Paste it into this extension's Organization setting.\n3. Ask Claude, for example: \"list our OpenZeppelin audits\". The extension reads your session from Chrome. The first time, macOS may ask whether to allow access to \"Chrome Safe Storage\": click Always Allow.\n\nWhen the session expires, sign in again in Chrome and retry. Submitting or removing a response always asks you first.",
+  "platforms": ["darwin"],
+  "env": {
+    "OZ_AUDITS_ORG": "${user_config.org}"
+  },
+  "user_config": {
+    "org": {
+      "type": "string",
+      "title": "Organization",
+      "description": "The part after audits.openzeppelin.com/ in your project's address, e.g. your-org.",
+      "required": false,
+      "default": ""
+    }
+  }
+}
