@@ -429,6 +429,17 @@ def login(cookie_stdin: bool, org: str | None, browser: str | None, cookie_file:
     console.print(f"[dim]Config saved to {CONFIG_FILE}[/]")
 
 
+def _links_table(title: str, text_header: str, href_header: str, links: list[dict]) -> Table:
+    """Table of page links whose href column is never cut, since an href is fed back to `read`."""
+    table = Table(title=title)
+    table.add_column(text_header, style="cyan")
+    widest = max((len(link["href"]) for link in links), default=0)
+    table.add_column(href_header, style="green", no_wrap=True, min_width=widest)
+    for link in links:
+        table.add_row(link["text"], link["href"])
+    return table
+
+
 @cli.command(name="ls", epilog="\b\nExamples:\n  oz-audits ls\n  oz-audits ls --wait 12000")
 @click.option("--wait", "-w", default=8000, help="Wait ms for JS render.")
 def list_audits(wait: int):
@@ -438,12 +449,7 @@ def list_audits(wait: int):
     result = with_session(config, lambda cookie: fetch_page(cookie, f"/{org}", wait_ms=wait))
 
     if result["links"]:
-        table = Table(title="Audit Links")
-        table.add_column("Title", style="cyan")
-        table.add_column("Path", style="green")
-        for link in result["links"]:
-            table.add_row(link["text"], link["href"])
-        out.print(table)
+        out.print(_links_table("Audit Links", "Title", "Path", result["links"]))
 
     text = result["text"]
     click.echo(text[:5000])
@@ -515,12 +521,7 @@ def links(path: str, wait: int):
         console.print("[yellow]No internal links found on this page.[/yellow]")
         return
 
-    table = Table(title=f"Links on {path}")
-    table.add_column("Text", style="cyan")
-    table.add_column("Href", style="green")
-    for link in found:
-        table.add_row(link["text"], link["href"])
-    out.print(table)
+    out.print(_links_table(f"Links on {path}", "Text", "Href", found))
 
 
 @cli.command(epilog="\b\nExamples:\n  oz-audits search /your-org/your-audit \"critical\"")
