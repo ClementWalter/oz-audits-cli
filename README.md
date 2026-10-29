@@ -25,6 +25,7 @@ oz-audits links <url-or-path>                    # internal links on a page
 oz-audits search <url-or-path> "critical"        # lines matching a keyword
 oz-audits html <url-or-path> -o page.html        # rendered HTML
 oz-audits submit <issue-url> --response "..." --pr <pr-url> --dry-run
+oz-audits edit <issue-url> --response "..." --pr <pr-url> --dry-run   # replace a posted response
 oz-audits remove <issue-url>
 oz-audits auth-status --json                     # vault sync metadata, no secrets
 ```

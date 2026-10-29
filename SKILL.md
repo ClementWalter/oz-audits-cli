@@ -3,8 +3,8 @@ name: oz-audits-cli
 description:
   "Read and respond to OpenZeppelin audit reports (audits.openzeppelin.com) via
   the `oz-audits` command, using browser cookies. Use
-  when the user asks to read, fetch, list, search, or submit/remove official
-  responses on OZ audit reports."
+  when the user asks to read, fetch, list, search, or submit/edit/remove
+  official responses on OZ audit reports."
 allowed-tools:
   - Bash
   - Read
@@ -134,6 +134,14 @@ oz-audits submit /<org>/<audit-slug>/issue/<issue-slug> \
   --resolution "Acknowledged, not resolved" \
   --response "Won't fix: ..."
 
+# Replace a posted response. Same options as submit; the new resolution, text,
+# PR and commits replace the old ones, and commits not passed again are removed.
+oz-audits edit /<org>/<audit-slug>/issue/<issue-slug> \
+  --resolution "Resolved" \
+  --response "Fixed in the linked PR." \
+  --pr https://github.com/org/repo/pull/123 \
+  --dry-run --screenshot /tmp/preview.png
+
 # Remove a previously-submitted response (with CLI confirmation)
 oz-audits remove /<org>/<audit-slug>/issue/<issue-slug>
 
@@ -180,8 +188,9 @@ oz-audits submit /<org>/<audit-slug>/issue/<issue-slug> \
   the audit path and open the same page in signed-in Chrome.
 - Missing Chrome produces an installation error; downloading Playwright
   Chromium is unnecessary.
-- `submit` sends for real unless `--dry-run`; always preview first and show the
-  user the screenshot. `remove` asks for confirmation unless `-y`.
+- `submit` and `edit` send for real unless `--dry-run`; always preview first and
+  show the user the screenshot. An issue that already has a response has no
+  submit button: use `edit`, which the error names. `remove` asks for confirmation unless `-y`.
 - Never put cookies in command arguments or logs; use `--browser chrome` or
   `--cookie-stdin`.
 

@@ -576,44 +576,60 @@ def _check_code_references(resolution: str, pr: str | None, commit: tuple[str, .
         )
 
 
+# The create and edit dialogs share one form; only the button that opens it and the one that sends it differ.
+DIALOG_BUTTONS = {
+    False: ("Submit Official Response", "Submit Response"),
+    True: ("Edit Official Response", "Update Response"),
+}
+
+
+def _response_options(command):
+    """Attach the response form's options, shared by `submit` and `edit`."""
+    for option in reversed((
+        click.argument("path"),
+        click.option(
+            "--resolution",
+            "-r",
+            type=click.Choice(RESOLUTION_CHOICES, case_sensitive=False),
+            default="Resolved",
+            help="Proposed Resolution dropdown value.",
+        ),
+        click.option(
+            "--response",
+            "-m",
+            required=True,
+            help="Response Details body text (plain text, newlines preserved).",
+        ),
+        click.option(
+            "--pr",
+            default=None,
+            help="Pull Request URL (e.g. https://github.com/org/repo/pull/123).",
+        ),
+        click.option(
+            "--commit",
+            "-c",
+            multiple=True,
+            help="Commit URL or hash. Repeat to add multiple commits.",
+        ),
+        click.option("--wait", "-w", default=8000, help="Wait ms for JS render."),
+        click.option(
+            "--dry-run",
+            is_flag=True,
+            help="Fill the form but do not send it. Saves a screenshot for verification.",
+        ),
+        click.option(
+            "--screenshot",
+            type=click.Path(),
+            default=None,
+            help="Save a screenshot of the filled form (helpful with --dry-run).",
+        ),
+    )):
+        command = option(command)
+    return command
+
+
 @cli.command(epilog="\b\nExamples:\n  oz-audits submit /your-org/your-audit/issue/your-issue --response \"Fixed in the linked PR.\" --pr https://github.com/org/repo/pull/123 --dry-run --screenshot /tmp/preview.png\n  oz-audits submit /your-org/your-audit/issue/your-issue -r \"Acknowledged, not resolved\" -m \"Accepted risk.\"")
-@click.argument("path")
-@click.option(
-    "--resolution",
-    "-r",
-    type=click.Choice(RESOLUTION_CHOICES, case_sensitive=False),
-    default="Resolved",
-    help="Proposed Resolution dropdown value.",
-)
-@click.option(
-    "--response",
-    "-m",
-    required=True,
-    help="Response Details body text (plain text, newlines preserved).",
-)
-@click.option(
-    "--pr",
-    default=None,
-    help="Pull Request URL (e.g. https://github.com/org/repo/pull/123).",
-)
-@click.option(
-    "--commit",
-    "-c",
-    multiple=True,
-    help="Commit URL or hash. Repeat to add multiple commits.",
-)
-@click.option("--wait", "-w", default=8000, help="Wait ms for JS render.")
-@click.option(
-    "--dry-run",
-    is_flag=True,
-    help="Fill the form but do not click Submit. Saves a screenshot for verification.",
-)
-@click.option(
-    "--screenshot",
-    type=click.Path(),
-    default=None,
-    help="Save a screenshot of the filled form (helpful with --dry-run).",
-)
+@_response_options
 def submit(
     path: str,
     resolution: str,
@@ -640,7 +656,38 @@ def submit(
 
     with_session(
         load_config(),
-        lambda cookie: _submit(cookie, path, resolution, response, pr, commit, wait, dry_run, screenshot),
+        lambda cookie: _submit(cookie, path, resolution, response, pr, commit, wait, dry_run, screenshot, edit=False),
+    )
+
+
+@cli.command(epilog="\b\nExamples:\n  oz-audits edit /your-org/your-audit/issue/your-issue -r \"Resolved\" -m \"Fixed in the linked PR.\" --pr https://github.com/org/repo/pull/123 --dry-run --screenshot /tmp/preview.png")
+@_response_options
+def edit(
+    path: str,
+    resolution: str,
+    response: str,
+    pr: str | None,
+    commit: tuple[str, ...],
+    wait: int,
+    dry_run: bool,
+    screenshot: str | None,
+):
+    """Replace the official response already posted on an OZ audit issue.
+
+    PATH is the issue URL path, e.g.
+    /<org>/<audit-slug>/issue/<issue-slug>
+
+    The new resolution, text, PR and commits replace the old ones entirely:
+    commits not passed again are removed. Use --dry-run to preview.
+    """
+    _check_code_references(resolution, pr, commit)
+
+    if not path.startswith("/"):
+        path = f"/{path}"
+
+    with_session(
+        load_config(),
+        lambda cookie: _submit(cookie, path, resolution, response, pr, commit, wait, dry_run, screenshot, edit=True),
     )
 
 
@@ -654,8 +701,10 @@ def _submit(
     wait: int,
     dry_run: bool,
     screenshot: str | None,
+    edit: bool,
 ) -> None:
-    """Fill, and unless `dry_run` send, the response dialog of the issue at `path`."""
+    """Fill, and unless `dry_run` send, the create or `edit` response dialog of the issue at `path`."""
+    open_label, send_label = DIALOG_BUTTONS[edit]
     url = f"{BASE_URL}{_site_path(path)}"
     cookies = _parse_cookie_header(cookie)
 
@@ -682,16 +731,19 @@ def _submit(
             }"""
         )
 
-        # Open the submission dialog.
-        submit_btn = page.query_selector(
-            'button:has-text("Submit Official Response")'
-        )
+        # Open the dialog.
+        submit_btn = page.query_selector(f'button:has-text("{open_label}")')
         if submit_btn is None:
             browser.close()
+            hint = (
+                "The issue has no response yet: use `submit`."
+                if edit
+                else "The issue may already have a response: use `edit`."
+            )
             raise click.ClickException(
-                "Could not find 'Submit Official Response' button on page. "
-                "Verify the path points to an issue page and that your account "
-                "has permission to respond."
+                f"Could not find '{open_label}' button on page. {hint} "
+                "Also verify the path points to an issue page and that your "
+                "account has permission to respond."
             )
         submit_btn.click(force=True)
         page.wait_for_selector('[role="dialog"]', timeout=10_000)
@@ -724,22 +776,36 @@ def _submit(
             raise click.ClickException("Response editor not found in dialog.")
         editor.click()
         page.wait_for_timeout(200)
-        # Clear any placeholder state, then insert the response text.
-        page.keyboard.press("Control+A")
+        # Clear the current text (the edit dialog is prefilled), then insert the response.
+        page.keyboard.press("ControlOrMeta+A")
         page.keyboard.press("Delete")
         # type() preserves newlines and is safer than setting innerHTML for
         # TipTap's internal document model.
         editor.type(response, delay=1)
         page.wait_for_timeout(300)
 
-        # Fill the Pull Request URL if provided.
+        # Fill the Pull Request URL if provided; clear a prefilled one otherwise.
+        pr_input = page.query_selector('[role="dialog"] input#pr-link')
         if pr:
-            pr_input = page.query_selector('[role="dialog"] input#pr-link')
             if pr_input is None:
                 browser.close()
                 raise click.ClickException("PR input not found in dialog.")
             pr_input.fill(pr)
             page.wait_for_timeout(200)
+        elif pr_input is not None:
+            pr_input.fill("")
+
+        # The edit dialog lists the previous commits, one row each with a remove button: drop
+        # the rows this response does not reuse, and empty the one row the form always keeps.
+        commit_inputs = '[role="dialog"] input[placeholder*="commit"]'
+        while len(page.query_selector_all(commit_inputs)) > max(1, len(commit)):
+            page.query_selector_all(commit_inputs)[-1].evaluate(
+                "(i) => i.parentElement.querySelector('button').click()"
+            )
+            page.wait_for_timeout(200)
+        if not commit:
+            for leftover in page.query_selector_all(commit_inputs):
+                leftover.fill("")
 
         # Add each commit. The dialog ships with one empty input + "Add commit"
         # button; we fill the first empty input, then click Add commit for
@@ -782,11 +848,11 @@ def _submit(
         # the form validate.
         page.wait_for_timeout(500)
         final_btn = page.query_selector(
-            '[role="dialog"] button:has-text("Submit Response")'
+            f'[role="dialog"] button:has-text("{send_label}")'
         )
         if final_btn is None:
             browser.close()
-            raise click.ClickException("Final Submit Response button not found.")
+            raise click.ClickException(f"Final {send_label} button not found.")
         # Check disabled state — if disabled, the required fields aren't valid.
         is_disabled = page.evaluate(
             """(btn) => btn.disabled || btn.hasAttribute('disabled')""",
@@ -795,7 +861,7 @@ def _submit(
         if is_disabled:
             browser.close()
             raise click.ClickException(
-                "Submit Response button is disabled — response text or PR/commit "
+                f"{send_label} button is disabled — response text or PR/commit "
                 "may not have been registered by the form. Try --dry-run with "
                 "--screenshot to inspect."
             )
@@ -807,7 +873,7 @@ def _submit(
                 '[role="dialog"]', state="detached", timeout=15_000
             )
             console.print(
-                f"[green bold]Submitted response for[/] {path}"
+                f"[green bold]{'Updated' if edit else 'Submitted'} response for[/] {path}"
             )
         except Exception:
             # Dialog did not close — capture current state for debugging.
