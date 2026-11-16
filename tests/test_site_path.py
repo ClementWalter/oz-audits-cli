@@ -72,7 +72,7 @@ def fetched(monkeypatch):
         paths.append(path)
         return {"text": "", "html": "", "links": [], "url": ""}
 
-    monkeypatch.setattr(cli, "load_config", lambda: {})
+    monkeypatch.setattr(cli, "load_config", dict)
     monkeypatch.setattr(cli, "with_session", lambda config, run: run("cookie"))
     monkeypatch.setattr(cli, "fetch_page", fetch_page)
     return paths
@@ -93,7 +93,7 @@ def test_page_command_fetches_site_path_of_full_url(fetched, args):
 def written(monkeypatch):
     """Paths the write commands hand to their browser step, with a stub session."""
     paths: list[str] = []
-    monkeypatch.setattr(cli, "load_config", lambda: {})
+    monkeypatch.setattr(cli, "load_config", dict)
     monkeypatch.setattr(cli, "with_session", lambda config, run: run("cookie"))
     monkeypatch.setattr(cli, "_submit", lambda cookie, path, *rest, **kw: paths.append(path))
     monkeypatch.setattr(cli, "_remove", lambda cookie, path, wait: paths.append(path))

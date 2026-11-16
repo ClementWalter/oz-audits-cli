@@ -282,9 +282,8 @@ def _site_path(path: str) -> str:
     if path.startswith(f"{host}/") or path == host:
         path = f"https://{path}"
     parts = urlsplit(path)
-    if parts.scheme or parts.netloc:
-        if parts.netloc != host:
-            raise click.BadParameter(f"{path} is not on {BASE_URL}; pass /<org>/<audit-slug>")
+    if (parts.scheme or parts.netloc) and parts.netloc != host:
+        raise click.BadParameter(f"{path} is not on {BASE_URL}; pass /<org>/<audit-slug>")
     return "/" + parts.path.strip("/")
 
 
