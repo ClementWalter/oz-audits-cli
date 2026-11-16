@@ -23,6 +23,7 @@ import os
 import shutil
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import click
 from playwright.sync_api import Error as PlaywrightError, sync_playwright
@@ -270,13 +271,52 @@ def with_session(config: dict, run):
 
 
 def _site_path(path: str) -> str:
-    """Accept a full audits.openzeppelin.com URL as well as a site path."""
+    """Reduce a site path or a full audits.openzeppelin.com URL to `/<org>/...`.
+
+    Query string, `#fragment` and trailing slashes are dropped: the site routes
+    on the path alone. Idempotent, so callers may normalize more than once.
+    """
+    host = urlsplit(BASE_URL).netloc
     path = path.strip()
-    if path.startswith(BASE_URL):
-        path = path[len(BASE_URL):]
-    elif path.startswith("http"):
-        raise click.BadParameter(f"{path} is not on {BASE_URL}; pass /<org>/<audit-slug>")
-    return path if path.startswith("/") else f"/{path}"
+    # A URL pasted without its scheme parses as a path starting with the host.
+    if path.startswith(f"{host}/") or path == host:
+        path = f"https://{path}"
+    parts = urlsplit(path)
+    if parts.scheme or parts.netloc:
+        if parts.netloc != host:
+            raise click.BadParameter(f"{path} is not on {BASE_URL}; pass /<org>/<audit-slug>")
+    return "/" + parts.path.strip("/")
+
+
+def _internal_links(anchors: list[dict]) -> list[dict]:
+    """Site links among `anchors` as `{text, href}`, hrefs on this site shown as site paths.
+
+    A text-less anchor (a table row or icon link) is labelled by its href unless
+    a labelled anchor already links there.
+    """
+    host = urlsplit(BASE_URL).netloc
+    links: list[dict] = []
+    for anchor in anchors:
+        href = anchor["href"].strip()
+        parts = urlsplit(href)
+        if parts.netloc:
+            if parts.netloc != host or parts.scheme not in ("", "http", "https"):
+                continue
+            href = href[href.index(host) + len(host):] or "/"
+        elif parts.scheme or not href.startswith("/"):
+            continue
+        links.append({"text": anchor["text"].strip(), "href": href})
+    labelled = {link["href"] for link in links if link["text"]}
+    seen: set[str] = set()
+    kept: list[dict] = []
+    for link in links:
+        if not link["text"]:
+            if link["href"] in labelled or link["href"] in seen:
+                continue
+            seen.add(link["href"])
+            link = {"text": link["href"], "href": link["href"]}
+        kept.append(link)
+    return kept
 
 
 def fetch_page(cookie_str: str, path: str, wait_ms: int = 8000) -> dict:
@@ -308,14 +348,13 @@ def fetch_page(cookie_str: str, path: str, wait_ms: int = 8000) -> dict:
         text = page.evaluate("() => document.body.innerText")
         html = page.content()
 
-        # Extract all internal links
-        links = page.evaluate(
-            """() => {
-                return Array.from(document.querySelectorAll('a[href]'))
-                    .map(a => ({text: a.innerText.trim(), href: a.getAttribute('href')}))
-                    .filter(l => l.text && (l.href.startsWith('/') || l.href.includes('audits.openzeppelin.com')))
-            }"""
+        anchors = page.evaluate(
+            """() => Array.from(document.querySelectorAll('a[href]')).map(a => ({
+                text: a.innerText.trim() || a.getAttribute('aria-label') || a.getAttribute('title') || '',
+                href: a.getAttribute('href'),
+            }))"""
         )
+        links = _internal_links(anchors)
 
         browser.close()
 
@@ -467,8 +506,7 @@ def read(path: str, output: str | None, wait: int):
 
     PATH is the URL path relative to the base, e.g. /<org>/some-audit-id.
     """
-    if not path.startswith("/"):
-        path = f"/{path}"
+    path = _site_path(path)
 
     result = with_session(load_config(), lambda cookie: fetch_page(cookie, path, wait_ms=wait))
     text = result["text"]
@@ -493,8 +531,7 @@ def html(path: str, output: str | None, wait: int):
 
     PATH is the URL path relative to the base, e.g. /<org>.
     """
-    if not path.startswith("/"):
-        path = f"/{path}"
+    path = _site_path(path)
 
     result = with_session(load_config(), lambda cookie: fetch_page(cookie, path, wait_ms=wait))
 
@@ -506,13 +543,18 @@ def html(path: str, output: str | None, wait: int):
         click.echo(result["html"])
 
 
-@cli.command(epilog="\b\nExamples:\n  oz-audits links /your-org\n  oz-audits links /your-org/your-audit")
+@cli.command(epilog="\b\nExamples:\n  oz-audits links /your-org/your-audit/issues\n  oz-audits links https://audits.openzeppelin.com/your-org/your-audit/issues\n  oz-audits links /your-org")
 @click.argument("path")
 @click.option("--wait", "-w", default=8000, help="Wait ms for JS render.")
 def links(path: str, wait: int):
-    """List all internal links on a page."""
-    if not path.startswith("/"):
-        path = f"/{path}"
+    """List all internal links on a page, e.g. an audit's issue paths.
+
+    On /<org>/<audit-slug>/issues the table lists every issue path
+    /<org>/<audit-slug>/issue/<issue-slug>, ready for `read`, `submit`,
+    `edit` or `remove`; the audit root itself only links its sections.
+    PATH is a site path or the full URL.
+    """
+    path = _site_path(path)
 
     result = with_session(load_config(), lambda cookie: fetch_page(cookie, path, wait_ms=wait))
     found = result["links"]
@@ -533,8 +575,7 @@ def search(path: str, query: str, wait: int):
 
     Prints lines from the extracted text that contain QUERY (case-insensitive).
     """
-    if not path.startswith("/"):
-        path = f"/{path}"
+    path = _site_path(path)
 
     result = with_session(load_config(), lambda cookie: fetch_page(cookie, path, wait_ms=wait))
     text = result["text"]
@@ -651,8 +692,7 @@ def submit(
     """
     _check_code_references(resolution, pr, commit)
 
-    if not path.startswith("/"):
-        path = f"/{path}"
+    path = _site_path(path)
 
     with_session(
         load_config(),
@@ -682,8 +722,7 @@ def edit(
     """
     _check_code_references(resolution, pr, commit)
 
-    if not path.startswith("/"):
-        path = f"/{path}"
+    path = _site_path(path)
 
     with_session(
         load_config(),
@@ -905,6 +944,7 @@ def remove(path: str, wait: int, yes: bool):
     "Remove Response" button in that case. If no response is present, the
     command exits with a clear message and does not alter state.
     """
+    path = _site_path(path)
     if not yes and not sys.stdin.isatty():
         console.print(f"[yellow]Dry run: would remove the official response on {path}. Pass --yes to remove it.[/]")
         return
@@ -913,9 +953,6 @@ def remove(path: str, wait: int, yes: bool):
     ):
         console.print("[yellow]Aborted.[/]")
         return
-
-    if not path.startswith("/"):
-        path = f"/{path}"
 
     with_session(load_config(), lambda cookie: _remove(cookie, path, wait))
 

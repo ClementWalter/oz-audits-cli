@@ -29,7 +29,12 @@ oz-audits read https://audits.openzeppelin.com/<org>/<audit-slug>/issues
 ```
 
 Every path argument takes either a site path (`/<org>/<audit-slug>`) or the full
-URL copied from the browser.
+URL copied from the browser (query string, `#fragment` and trailing slash are
+ignored).
+
+To list an audit's issues, run `oz-audits links /<org>/<audit-slug>/issues`: it
+prints every issue path (`/<org>/<audit-slug>/issue/<issue-slug>`). The audit
+root only links its sections. Do not scrape `oz-audits html` for issue paths.
 
 ## Authentication
 
@@ -100,8 +105,8 @@ oz-audits read /<org>/some-audit-id
 # Save to file
 oz-audits read /<org>/some-audit-id -o audit.txt
 
-# List all links on a page
-oz-audits links /<org>
+# List an audit's issues (every /<org>/<audit-slug>/issue/<issue-slug> path)
+oz-audits links /<org>/<audit-slug>/issues
 
 # Search page content for a keyword
 oz-audits search /<org> "critical"
@@ -165,7 +170,7 @@ several commit references.
 
 ```bash
 # Which issues are in this audit, and what does the critical one say?
-oz-audits links /<org>/<audit-slug>
+oz-audits links /<org>/<audit-slug>/issues
 oz-audits read /<org>/<audit-slug>/issue/<issue-slug>
 
 # Find every mention of a keyword in a report, then save the whole report

@@ -21,7 +21,7 @@ installed.
 oz-audits login --browser chrome --org <org>     # import the signed-in Chrome session
 oz-audits ls                                     # audits on the org page
 oz-audits read <url-or-path> -o audit.txt        # rendered page text
-oz-audits links <url-or-path>                    # internal links on a page
+oz-audits links <url-or-path>                    # internal links; on <audit>/issues, the issue paths
 oz-audits search <url-or-path> "critical"        # lines matching a keyword
 oz-audits html <url-or-path> -o page.html        # rendered HTML
 oz-audits submit <issue-url> --response "..." --pr <pr-url> --dry-run
